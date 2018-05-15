@@ -1,0 +1,34 @@
+{
+  "name": "x2timent-engine",
+  "version": "1.0.0",
+  "description": "A text analyzer to tell the sentiment in a given text",
+  "main": "server.js",
+  "dependencies": {
+    "dcr-engine": "^0.0.1",
+    "dcr-graphql": "^0.0.3"
+  },
+  "devDependencies": {
+    "babel-cli": "^6.26.0",
+    "babel-plugin-transform-object-rest-spread": "^6.26.0",
+    "babel-preset-env": "^1.6.1",
+    "nodemon": "^1.12.1"
+  },
+  "babel": {
+    "presets": [
+      "env"
+    ],
+    "plugins": [
+      "transform-object-rest-spread"
+    ]
+  },
+  "scripts": {
+    "start": "nodemon ./server.js --exec babel-node"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ajdurancr/x2ntiment-engine"
+  },
+  "author": "Antony J. Durán Hernández<ajdurancr@gmail.com> (https://github.com/ajdurancr)",
+  "license": "",
+  "homepage": "https://github.com/ajdurancr/x2ntiment-engine#readme"
+}
