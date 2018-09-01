@@ -21,3 +21,7 @@ export function getOccurrencesByWord(words) {
 export function sortByOccurrence(collection) {
   return [...collection].sort(({ occur }, { occur: occurB }) => occurB - occur)
 }
+
+export const getFirstRow = (rows) => (rows || [])[0]
+
+export const resolveArguments = (resolverFunction) => (_, args) => resolverFunction(args)

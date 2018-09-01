@@ -1,11 +1,6 @@
-import { schema, mergeResolvers } from 'dcr-graphql'
+import { schema } from 'dcr-graphql'
 
-import AnalysisSchema from './analysis/schema'
-import AnalysisResolver from './analysis/resolvers'
-import LearningSchema from './learning/schema'
-import LearningResolver from './learning/resolvers'
+import resolvers from './resolvers'
+import schemas from './schemas'
 
-const resolvers = mergeResolvers(AnalysisResolver, LearningResolver)
-const typeDefs = [AnalysisSchema, LearningSchema]
-
-export default schema({ typeDefs, resolvers })
+export default schema({ typeDefs: schemas, resolvers })
