@@ -30,6 +30,97 @@ COMMENT ON EXTENSION plpgsql IS 'PL/pgSQL procedural language';
 
 
 --
+-- Name: improveknowledgehistoryoutput; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.improveknowledgehistoryoutput AS (
+	"newKnowledgeHistory" text,
+	"updatedKnowledgeHistory" text
+);
+
+
+--
+-- Name: knowledgehistoryrecordinput; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.knowledgehistoryrecordinput AS (
+	"sentimentId" integer,
+	"knowledgeId" integer,
+	"knowledgeModelId" integer,
+	word text,
+	occurrence bigint
+);
+
+
+--
+-- Name: knowledgehistoryrow; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.knowledgehistoryrow AS (
+	"sentimentId" integer,
+	"knowledgeId" integer,
+	"knowledgeModelId" integer,
+	word character varying,
+	occurrence bigint,
+	persist boolean,
+	acknowledged boolean,
+	"createdAt" timestamp without time zone,
+	"updatedAt" timestamp without time zone
+);
+
+
+--
+-- Name: rawknowledgehistoryinput; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.rawknowledgehistoryinput AS (
+	"sentimentId" integer,
+	"knowledgeId" integer,
+	"knowledgeModelId" integer,
+	words text
+);
+
+
+--
+-- Name: decodeknowledgehistoryinput(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.decodeknowledgehistoryinput(knowledgehistoryrecords text) RETURNS SETOF public.knowledgehistoryrecordinput
+    LANGUAGE plpgsql
+    AS $$
+begin
+	return query
+		select khr."sentimentId", khr."knowledgeId", khr."knowledgeModelId", lower(khr.word) as word, khr.occurrence 
+		from json_populate_recordset(null::knowledgeHistoryRecordInput, knowledgeHistoryRecords::json) as khr;
+end;
+$$;
+
+
+--
+-- Name: encodeknowledgehistoryinput(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.encodeknowledgehistoryinput(rawknowledgehistoryrecords text) RETURNS TABLE(encondedknowledgehistoryinput text)
+    LANGUAGE plpgsql
+    AS $$
+begin
+	return query
+		with knwoledgeHistoryInput as (
+			select
+				rawInput."sentimentId",
+				rawInput."knowledgeId",
+				rawInput."knowledgeModelId",
+				lower(trim(jsonb_array_elements(rawInput.words::jsonb)::text, '"')) as word,
+				sum(1) as occurrence
+			from json_populate_recordset(null::rawKnowledgeHistoryInput, rawKnowledgeHistoryRecords::json) as rawInput
+			group by rawInput."sentimentId", rawInput."knowledgeId", rawInput."knowledgeModelId", word
+		)
+		select array_to_json(array_agg(knwoledgeHistoryInput))::text as encondedKnowledgeHistoryInput FROM knwoledgeHistoryInput;
+end;
+$$;
+
+
+--
 -- Name: getknowledge(integer[]); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -78,6 +169,67 @@ begin
 		select sentiment."sentimentId", sentiment."name"
 		from public.sentiment
 		where sentimentIds isnull or sentiment."sentimentId" = ANY(sentimentIds);
+end;
+$$;
+
+
+--
+-- Name: improveautomatedknowledgehistory(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.improveautomatedknowledgehistory(knowledgehistoryrecords text) RETURNS SETOF public.improveknowledgehistoryoutput
+    LANGUAGE plpgsql
+    AS $$
+begin
+	return query
+		select * from improveKnowledgeHistoryWithEncodedInput((select * from encodeKnowledgeHistoryInput(knowledgeHistoryRecords)), false);		
+end;
+$$;
+
+
+--
+-- Name: improveknowledgehistory(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.improveknowledgehistory(knowledgehistoryrecords text) RETURNS SETOF public.improveknowledgehistoryoutput
+    LANGUAGE plpgsql
+    AS $$
+begin
+	return query
+		select * from improveKnowledgeHistoryWithEncodedInput((select * from encodeKnowledgeHistoryInput(knowledgeHistoryRecords)), true);		
+end;
+$$;
+
+
+--
+-- Name: improveknowledgehistorywithencodedinput(text, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.improveknowledgehistorywithencodedinput(encodedknowledgehistoryinput text, persistvalue boolean) RETURNS SETOF public.improveknowledgehistoryoutput
+    LANGUAGE plpgsql
+    AS $$
+DECLARE persistMode boolean = case when(persistValue isnull) then false else persistValue end;
+begin
+	CREATE TEMPORARY TABLE newKnowledgeHistory (
+		"knowledgeId" integer,
+	    "sentimentId" integer,
+		"knowledgeModelId" integer,
+	    word varchar(255),
+	    occurrence bigint
+	) ON COMMIT DROP;
+
+	INSERT INTO newKnowledgeHistory select * from decodeKnowledgeHistoryInput(encodedKnowledgeHistoryInput);
+
+	return query 
+		select
+			(select array_to_json(array_agg(newKnowledgeHistory))::text from newKnowledgeHistory) as "newKnowledgeHistory",
+			(
+				select array_to_json(array_agg(updatedKnowledgeHistory))::text
+				from (
+					select * from updateKnowledgeHistory((select array_to_json(array_agg(newKnowledgeHistory)) FROM newKnowledgeHistory)::text, persistMode)
+				) as updatedKnowledgeHistory
+			) as "updatedKnowledgeHistory";
+		
 end;
 $$;
 
@@ -165,6 +317,95 @@ $$;
 
 
 --
+-- Name: updateknowledgehistory(text, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.updateknowledgehistory(knowledgehistoryrecords text, persistvalue boolean) RETURNS SETOF public.knowledgehistoryrow
+    LANGUAGE plpgsql
+    AS $$
+DECLARE persistMode boolean = case when(persistValue isnull) then false else persistValue end;
+begin
+	CREATE TEMPORARY TABLE knowledgeHistoryInput (
+		"knowledgeId" integer,
+	    "sentimentId" integer,
+		"knowledgeModelId" integer,
+	    word varchar(255),
+	    occurrence bigint
+	) ON COMMIT DROP;
+
+	INSERT INTO knowledgeHistoryInput select * from decodeKnowledgeHistoryInput(knowledgeHistoryRecords);
+
+	INSERT INTO "knowledgeHistory" as khTable ("knowledgeId", "sentimentId", "knowledgeModelId", word, occurrence, persist, acknowledged)
+	(
+		select
+			khinputTable."knowledgeId",
+			khinputTable."sentimentId",
+			khinputTable."knowledgeModelId",
+			khinputTable.word,
+			khinputTable.occurrence,
+			persistMode,
+			persistMode
+		from knowledgeHistoryInput as khinputTable
+	)
+	on conflict on constraint "sentimentId_knowledgeId_knowledgeModelId_word_persist"
+	do update
+	set
+		occurrence = case when (persistMode = false and khTable.acknowledged = true) then 0 else khTable.occurrence end + excluded.occurrence,
+		acknowledged = persistMode,
+		"updatedAt" = current_timestamp;
+
+	return query
+		select khTable.*
+		from knowledgeHistoryInput as khInput
+		inner join "knowledgeHistory" as khTable
+			on khInput."knowledgeId" = khTable."knowledgeId"
+				and khInput."sentimentId" = khTable."sentimentId"
+				and khInput."knowledgeModelId" = khTable."knowledgeModelId"
+				and khInput.word = khTable.word
+		where khTable.persist = persistMode;
+end;
+$$;
+
+
+--
+-- Name: updateknowledgehistoryfromautomatedknowledge(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.updateknowledgehistoryfromautomatedknowledge() RETURNS SETOF public.improveknowledgehistoryoutput
+    LANGUAGE plpgsql
+    AS $$
+begin
+	CREATE TEMPORARY TABLE automatedKnowledge (
+		"knowledgeId" integer,
+	    "sentimentId" integer,
+		"knowledgeModelId" integer,
+	    word varchar(255),
+	    occurrence bigint
+	) ON COMMIT DROP;
+
+	INSERT INTO automatedKnowledge
+		select kh."knowledgeId", kh."sentimentId", kh."knowledgeModelId", kh.word, kh.occurrence
+		from "knowledgeHistory" as kh
+		where kh.persist = false and kh.acknowledged = false;
+
+	update "knowledgeHistory" as kh
+	set acknowledged = true,
+		"updatedAt" = current_timestamp
+	from automatedKnowledge as ak
+	where
+		kh."sentimentId" = ak."sentimentId"
+		and kh."knowledgeId" = ak."knowledgeId"
+		and kh."knowledgeModelId" = ak."knowledgeModelId"
+		and kh.word = ak.word
+		and kh.persist = false;
+
+	return query
+		select * from improveKnowledgeHistoryWithEncodedInput((select array_to_json(array_agg(automatedKnowledge)) FROM automatedKnowledge)::text, true);
+end;
+$$;
+
+
+--
 -- Name: updateknowledgemodel(integer, character varying, numeric, integer, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -238,7 +479,11 @@ CREATE TABLE public."knowledgeHistory" (
     "sentimentId" integer NOT NULL,
     "knowledgeModelId" integer NOT NULL,
     word character varying(255) NOT NULL,
-    occurrence bigint NOT NULL
+    occurrence bigint NOT NULL,
+    persist boolean NOT NULL,
+    acknowledged boolean NOT NULL,
+    "createdAt" timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "updatedAt" timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
 
@@ -347,14 +592,6 @@ ALTER TABLE ONLY public.sentiment ALTER COLUMN "sentimentId" SET DEFAULT nextval
 
 
 --
--- Name: knowledgeHistory knowledgeId_sentimentId_word; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."knowledgeHistory"
-    ADD CONSTRAINT "knowledgeId_sentimentId_word" PRIMARY KEY ("sentimentId", "knowledgeId", "knowledgeModelId", word);
-
-
---
 -- Name: knowledgeModel knowledgeModel_alpha_percentiles_percentilesToTake_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -392,6 +629,14 @@ ALTER TABLE ONLY public.knowledge
 
 ALTER TABLE ONLY public.knowledge
     ADD CONSTRAINT knowledge_pkey PRIMARY KEY ("knowledgeId");
+
+
+--
+-- Name: knowledgeHistory sentimentId_knowledgeId_knowledgeModelId_word_persist; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."knowledgeHistory"
+    ADD CONSTRAINT "sentimentId_knowledgeId_knowledgeModelId_word_persist" PRIMARY KEY ("sentimentId", "knowledgeId", "knowledgeModelId", word, persist);
 
 
 --
