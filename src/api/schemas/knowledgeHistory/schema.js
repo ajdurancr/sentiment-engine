@@ -8,17 +8,6 @@ const knowledgeHistorySchema = `
   }
 
   type KnowledgeHistory {
-    sentimentId: Int
-    knowledgeId: Int
-    knowledgeModelId: Int
-    word: String
-    occurrence: Int
-  }
-
-  type KnowledgeHistoryWithMetadata {
-    sentimentId: Int
-    knowledgeId: Int
-    knowledgeModelId: Int
     word: String
     occurrence: Int
     persist: Boolean
@@ -27,15 +16,28 @@ const knowledgeHistorySchema = `
     updatedAt: String
   }
 
-  type ImprovedKnowledgeHistory {
-    newKnowledgeHistory: [KnowledgeHistory]
-    updatedKnowledgeHistory: [KnowledgeHistoryWithMetadata]
+  type KnowledgeHistoryImprovement {
+    # Knowledge to be added to knowledge history
+    newKnowledgeHistory: [KnowledgeModelWithKnowledge]
+
+    # Knowledge after knowledge history was updated
+    updatedKnowledgeHistory: [KnowledgeModelWithKnowledge]
+  }
+
+  extend type Query {
+    getKnowledgeHistory(persistMode: Boolean!): [KnowledgeModelWithKnowledge]
   }
 
   extend type Mutation {
     improveKnowledgeHistory(
       knowledgeHistoryInput: [KnowledgeHistoryImprovementInput]!
-    ): ImprovedKnowledgeHistory
+    ): KnowledgeHistoryImprovement
+
+    improveAutomatedKnowledgeHistory(
+      knowledgeHistoryInput: [KnowledgeHistoryImprovementInput]!
+    ): KnowledgeHistoryImprovement
+
+    updateKnowledgeHistoryFromAutomatedKnowledge: KnowledgeHistoryImprovement
   }
 `
 

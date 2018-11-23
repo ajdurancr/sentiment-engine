@@ -34,8 +34,8 @@ COMMENT ON EXTENSION plpgsql IS 'PL/pgSQL procedural language';
 --
 
 CREATE TYPE public.improveknowledgehistoryoutput AS (
-	"newKnowledgeHistory" text,
-	"updatedKnowledgeHistory" text
+	"newKnowledgeHistory" json,
+	"updatedKnowledgeHistory" json
 );
 
 
@@ -137,6 +137,24 @@ $$;
 
 
 --
+-- Name: getknowledgehistory(boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.getknowledgehistory(persistvalue boolean) RETURNS TABLE("knowledgeHistory" json)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE persistMode boolean = case when(persistValue isnull) then false else persistValue end;
+begin
+	return query
+		select groupKnowledgeHistoryBy_knowledgeModel_knowledge_sentiment(
+			(select array_to_json(array_agg(row_to_json(kh))) from "knowledgeHistory" as kh where persist = persistMode and acknowledged = persistMode)
+		) as "knowledgeHistory";
+		
+end;
+$$;
+
+
+--
 -- Name: getknowledgemodels(integer[]); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -174,6 +192,61 @@ $$;
 
 
 --
+-- Name: groupknowledgehistoryby_knowledgemodel_knowledge_sentiment(json); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.groupknowledgehistoryby_knowledgemodel_knowledge_sentiment(knowledgehistoryrecords json) RETURNS TABLE("knowledgeModels" json)
+    LANGUAGE plpgsql
+    AS $$
+begin
+	return query
+		with knowledgeHistoryBySentiment as (
+			select
+				khr."knowledgeModelId",
+				khr."knowledgeId",
+				khr."sentimentId",
+				array_to_json(array_agg(row_to_json((
+					select knowledgeHistoryInfo
+					from (select khr.word, khr.occurrence, khr.persist, khr.acknowledged, khr."createdAt", khr."updatedAt") as knowledgeHistoryInfo
+				)))) as "knowledgeHistory"
+			from (select * from json_populate_recordset(null::knowledgeHistoryRow, knowledgeHistoryRecords)) as khr
+			group by khr."knowledgeModelId", khr."knowledgeId",  khr."sentimentId"
+			order by khr."sentimentId"
+		),
+		sentimentsByKnowledge as (
+			select
+				khbs."knowledgeModelId",
+				khbs."knowledgeId",
+				array_to_json(array_agg(
+					row_to_json((select sentimentInfo from (select s.*, khbs."knowledgeHistory")as sentimentInfo))
+				)) as sentiments
+			from knowledgeHistoryBySentiment as khbs
+				inner join sentiment as s on s."sentimentId" = khbs."sentimentId"
+			group by khbs."knowledgeId", khbs."knowledgeModelId"
+			order by khbs."knowledgeId"
+		),
+		knowledgeByKnowledgeModel as (
+			select
+				sbk."knowledgeModelId",
+				array_to_json(array_agg(
+					row_to_json((select knowledgeInfo from (select k.*, sbk.sentiments)as knowledgeInfo))
+				)) as knowledge
+			from sentimentsByKnowledge as sbk
+				inner join knowledge as k on k."knowledgeId" = sbk."knowledgeId"
+			group by sbk."knowledgeModelId"
+			order by sbk."knowledgeModelId"
+		),
+		knowledgeModels as (
+			select row_to_json((select knowledgeModelInfo from (select km.*, kbkm.knowledge)as knowledgeModelInfo)) as "knowledgeModels"
+			from knowledgeByKnowledgeModel as kbkm
+				inner join "knowledgeModel" as km on km."knowledgeModelId" = kbkm."knowledgeModelId"
+		)
+		select * from knowledgeModels;
+end;
+$$;
+
+
+--
 -- Name: improveautomatedknowledgehistory(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -182,7 +255,7 @@ CREATE FUNCTION public.improveautomatedknowledgehistory(knowledgehistoryrecords 
     AS $$
 begin
 	return query
-		select * from improveKnowledgeHistoryWithEncodedInput((select * from encodeKnowledgeHistoryInput(knowledgeHistoryRecords)), false);		
+		select * from improveKnowledgeHistoryAndReturnResultsWithDefaultGrouping(knowledgeHistoryRecords, false);
 end;
 $$;
 
@@ -196,7 +269,32 @@ CREATE FUNCTION public.improveknowledgehistory(knowledgehistoryrecords text) RET
     AS $$
 begin
 	return query
-		select * from improveKnowledgeHistoryWithEncodedInput((select * from encodeKnowledgeHistoryInput(knowledgeHistoryRecords)), true);		
+		select * from improveKnowledgeHistoryAndReturnResultsWithDefaultGrouping(knowledgeHistoryRecords, true);
+end;
+$$;
+
+
+--
+-- Name: improveknowledgehistoryandreturnresultswithdefaultgrouping(text, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.improveknowledgehistoryandreturnresultswithdefaultgrouping(knowledgehistoryrecords text, persistvalue boolean) RETURNS SETOF public.improveknowledgehistoryoutput
+    LANGUAGE plpgsql
+    AS $$
+DECLARE persistMode boolean = case when(persistValue isnull) then false else persistValue end;
+begin
+	return query
+		with improvedKnowledgeOutput as (
+			select * from improveKnowledgeHistoryWithEncodedInput((select * from encodeKnowledgeHistoryInput(knowledgeHistoryRecords)), persistMode)
+		)
+		select
+			(select array_to_json(
+				((select array_agg(gkh."knowledgeModels") from groupKnowledgeHistoryBy_knowledgeModel_knowledge_sentiment(ikh."newKnowledgeHistory") as gkh))
+			)) as "newKnowledgeHistory",
+			(select array_to_json(
+				((select array_agg(gkh."knowledgeModels") from groupKnowledgeHistoryBy_knowledgeModel_knowledge_sentiment(ikh."updatedKnowledgeHistory") as gkh))
+			)) as "updatedKnowledgeHistory"
+		from improvedKnowledgeOutput as ikh;
 end;
 $$;
 
@@ -212,19 +310,19 @@ DECLARE persistMode boolean = case when(persistValue isnull) then false else per
 begin
 	CREATE TEMPORARY TABLE newKnowledgeHistory (
 		"knowledgeId" integer,
-	    "sentimentId" integer,
+	  "sentimentId" integer,
 		"knowledgeModelId" integer,
-	    word varchar(255),
-	    occurrence bigint
+	  word varchar(255),
+	  occurrence bigint
 	) ON COMMIT DROP;
 
 	INSERT INTO newKnowledgeHistory select * from decodeKnowledgeHistoryInput(encodedKnowledgeHistoryInput);
 
 	return query 
 		select
-			(select array_to_json(array_agg(newKnowledgeHistory))::text from newKnowledgeHistory) as "newKnowledgeHistory",
+			(select array_to_json(array_agg(newKnowledgeHistory)) from newKnowledgeHistory) as "newKnowledgeHistory",
 			(
-				select array_to_json(array_agg(updatedKnowledgeHistory))::text
+				select array_to_json(array_agg(updatedKnowledgeHistory))
 				from (
 					select * from updateKnowledgeHistory((select array_to_json(array_agg(newKnowledgeHistory)) FROM newKnowledgeHistory)::text, persistMode)
 				) as updatedKnowledgeHistory

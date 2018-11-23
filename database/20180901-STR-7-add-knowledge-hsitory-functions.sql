@@ -121,10 +121,10 @@ DECLARE persistMode boolean = case when(persistValue isnull) then false else per
 begin
 	CREATE TEMPORARY TABLE newKnowledgeHistory (
 		"knowledgeId" integer,
-	    "sentimentId" integer,
+	  "sentimentId" integer,
 		"knowledgeModelId" integer,
-	    word varchar(255),
-	    occurrence bigint
+	  word varchar(255),
+	  occurrence bigint
 	) ON COMMIT DROP;
 
 	INSERT INTO newKnowledgeHistory select * from decodeKnowledgeHistoryInput(encodedKnowledgeHistoryInput);

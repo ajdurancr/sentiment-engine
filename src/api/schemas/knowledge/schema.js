@@ -4,6 +4,12 @@ const knowledgeSchema = `
     name: String
   }
 
+  type KnowledgeWithSentiments {
+    knowledgeId: Int
+    name: String
+    sentiments: [SentimentsWithKnowledgeHistory]
+  }
+
   extend type Query {
     getKnowledge(knowledgeId: [Int]): [Knowledge]
   }

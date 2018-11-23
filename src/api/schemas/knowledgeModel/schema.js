@@ -8,6 +8,15 @@ const knowledgeModelSchema = `
     percentilesToTake: Int
   }
 
+  type KnowledgeModelWithKnowledge {
+    knowledgeModelId: Int
+    name: String
+    alpha: Float
+    percentiles: Int
+    percentilesToTake: Int
+    knowledge: [KnowledgeWithSentiments]
+  }
+
   extend type Query {
     getKnowledgeModels(knowledgeModelId: [Int]): [KnowledgeModel]
   }
